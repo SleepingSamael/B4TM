@@ -1,0 +1,98 @@
+---
+title: "Dimension Reduction"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r packages, include=FALSE}
+library(tidyverse)
+library(ggpubr)
+library(Gifi)
+library(knitr)
+```
+
+Loading data for dimension reduction and plotting
+```{r loading-data, echo=TRUE, message=FALSE, warning=FALSE}
+data<-read_tsv('../data/Train_call.txt')
+labels<-read_tsv('../data/Train_clinical.txt')%>%
+  rename(sample=Sample,subgroup=Subgroup)
+```
+
+```{r, echo=TRUE}
+data%>%head()%>%select(1:10)%>%kable()
+```
+
+```{r, echo=TRUE}
+labels%>%head()%>%kable()
+```
+
+```{r data-cleaning, message=FALSE, warning=FALSE, include=FALSE}
+data_cleaned<-data%>%
+  mutate(region = paste0("chr",Chromosome,":",Start,"-",End))%>%
+  select(region,everything())%>%
+  select(-Chromosome,-Start,-End,-Nclone)%>%
+  pivot_longer(-region,names_to = 'sample')%>%
+  pivot_wider(,names_from = 'region',values_from = 'value')%>%
+  full_join(labels)%>%
+  select(sample,subgroup,everything())
+```
+
+Using all data as is to create some unscaled PCAs - we see some structure in
+multiple plots separating cancer subgroups
+
+```{r pca-unscaled}
+pca_unscaled <-data_cleaned%>%
+  select(-sample,-subgroup)%>%
+  prcomp(scale=FALSE)
+
+pcs_unscaled <- data.frame(pca_unscaled$x)
+subgroup <- labels$subgroup
+
+p1 <- ggplot(pcs_unscaled,aes(x=PC1,y=PC2,color=subgroup)) + geom_point() + labs(title='Unscaled PC2 vs PC1')
+p2 <- ggplot(pcs_unscaled,aes(x=PC2,y=PC3,color=subgroup)) + geom_point() + labs(title='Unscaled PC3 vs PC2')
+p3 <- ggplot(pcs_unscaled,aes(x=PC3,y=PC4,color=subgroup)) + geom_point() + labs(title='Unscaled PC4 vs PC3')
+p4 <- ggplot(pcs_unscaled,aes(x=PC4,y=PC5,color=subgroup)) + geom_point() + labs(title='Unscaled PC5 vs PC4')
+
+ggarrange(p1, p2, p3, p4, ncol=2, nrow=2, common.legend = TRUE, legend="right")
+```
+Same for scaled PCAs - we see perhaps a slightly better separation
+
+```{r pca-scaled}
+pca_scaled <- data_cleaned%>%
+  select(-sample,-subgroup)%>%
+  prcomp(scale=TRUE)
+
+pcs_scaled <- data.frame(pca_scaled$x)
+
+p1 <- ggplot(pcs_scaled,aes(x=PC1,y=PC2,color=subgroup)) + geom_point() + labs(title='Scaled PC2 vs PC1')
+p2 <- ggplot(pcs_scaled,aes(x=PC2,y=PC3,color=subgroup)) + geom_point() + labs(title='Scaled PC3 vs PC2')
+p3 <- ggplot(pcs_scaled,aes(x=PC3,y=PC4,color=subgroup)) + geom_point() + labs(title='Scaled PC4 vs PC3')
+p4 <- ggplot(pcs_scaled,aes(x=PC4,y=PC5,color=subgroup)) + geom_point() + labs(title='Scaled PC5 vs PC4')
+
+ggarrange(p1, p2, p3, p4, ncol=2, nrow=2, common.legend = TRUE, legend="right")
+```
+Now we run Categorical principal component analysis (PRINCALS). There is some nice 
+HR+ separation from the rest.
+
+```{r princalc}
+princalc_fit <- princals(data=data_cleaned%>%select(-sample,-subgroup)%>%as.matrix(),
+                         ndim=5)
+pcs_cat <- data.frame(princalc_fit$objectscores)
+
+p1 <- ggplot(pcs_cat,aes(x=D1,y=D2,color=subgroup)) + geom_point() + labs(title='Categorical PC2 vs PC1')
+p2 <- ggplot(pcs_cat,aes(x=D2,y=D3,color=subgroup)) + geom_point() + labs(title='Categorical PC3 vs PC2')
+p3 <- ggplot(pcs_cat,aes(x=D3,y=D4,color=subgroup)) + geom_point() + labs(title='Categorical PC4 vs PC3')
+p4 <- ggplot(pcs_cat,aes(x=D4,y=D5,color=subgroup)) + geom_point() + labs(title='Categorical PC5 vs PC4')
+
+ggarrange(p1, p2, p3, p4, ncol=2, nrow=2, common.legend = TRUE, legend="right")
+
+```
+Outlier coordinates:
+```{r}
+pcs_cat[36,]%>%kable()
+labels[36,]%>%kable()
+```
+
