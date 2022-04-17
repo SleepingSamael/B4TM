@@ -1,0 +1,248 @@
+---
+title: "Gene wide comparisons"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r packages, include=FALSE}
+library(tidyverse)
+library(knitr)
+```
+
+Loading data for dimension reduction and plotting
+```{r loading-data, echo=TRUE, message=FALSE, warning=FALSE}
+data<-read_tsv('../data/Train_call.txt')
+labels<-read_tsv('../data/Train_clinical.txt')%>%
+  rename(sample=Sample,subgroup=Subgroup)
+```
+
+```{r, echo=TRUE}
+data%>%head()%>%select(1:10)%>%kable()
+```
+
+```{r, echo=TRUE}
+labels%>%head()%>%kable()
+```
+
+Filtering samples and preparing data
+```{r}
+HER2_samples <- labels%>%
+  filter(subgroup=='HER2+')%>%
+  pull(sample)
+
+HR_samples <- labels%>%
+  filter(subgroup=='HR+')%>%
+  pull(sample)
+
+triple_neg_samples <- labels%>%
+  filter(subgroup=='Triple Neg')%>%
+  pull(sample)
+
+HER2_data = data%>%select(one_of(HER2_samples))
+HR_data = data%>%select(one_of(HR_samples))
+triple_neg_data = data%>%select(one_of(triple_neg_samples))
+
+id_to_chr_map = data%>%
+  arrange(Chromosome,Start)%>%
+  mutate(no=row_number())%>%
+  distinct(Chromosome,.keep_all = TRUE)%>%
+  select(Chromosome,no)
+```
+
+HER2+ first 10 samples
+```{r, echo=TRUE}
+HER2_data%>%head()%>%select(1:10)%>%kable()
+```
+HR2 first 10 samples
+```{r, echo=TRUE}
+HR_data%>%head()%>%select(1:10)%>%kable()
+```
+Triple negative first 10 samples
+```{r, echo=TRUE}
+triple_neg_data %>%head() %>%select(1:10)%>%kable()
+```
+
+Running tests for HER2+ vs Triple negative comparison
+```{r warning=FALSE, include=TRUE}
+test_results_her2_vs_tneg<-
+  HER2_data%>%
+  cbind(triple_neg_data)%>%
+  rowwise()%>%
+  summarise(test=list(wilcox.test(c_across(one_of(HER2_samples)),
+                             c_across(one_of(triple_neg_samples)))))%>%
+  mutate(chr = data$Chromosome, start = data$Start, end = data$End)%>%
+  mutate(p.value = map_dbl(test,~.x$p.value))%>%
+  mutate(q.value=p.adjust(p.value,method = 'BH'))
+```
+Plotting results per chromosome (all regions have the same size)
+
+```{r echo=FALSE}
+test_results_her2_vs_tneg%>%
+  arrange(chr,start)%>%
+  mutate(no = row_number())%>%
+  ggplot(aes(x=no,y=-log(q.value),fill=as.factor(chr)))+
+  geom_col()+
+  geom_hline(yintercept = -log10(0.05),color='blue',alpha=0.3)+
+  labs(title = 'BH-corrected p-value distribution across whole genome',
+       subtitle = 'HER2+ vs Triple negative samples, Mann-Whitney U test',
+       fill = 'Chromosome',
+       x='Chromosome with ordered regions',
+       y=expression(-log[10](q.value)))+
+  coord_cartesian(ylim=c(0,5))+ 
+  scale_x_continuous(breaks=id_to_chr_map$no,labels=id_to_chr_map$Chromosome)
+```
+
+Boxplots for distributions of copy number esimates in the most significant region
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+HER2_significant_loc<-data%>%
+  filter(Chromosome==17,Start==35076296)%>%
+  t()%>%
+  as.data.frame()%>%
+  rename(amplifications=V1)%>%
+  rownames_to_column('sample')%>%
+  filter(str_detect(sample,'Array'))%>%
+  full_join(labels,by='sample')
+
+HER2_significant_loc%>%
+  ggplot(aes(x=subgroup,y=amplifications,color=subgroup))+
+  geom_boxplot()+
+  labs(title = 'chr17:35076296-35282086 location, includes HER2+ gene')
+```
+Results per chromosome for HR+ vs Triple negative comparison
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+test_results_hr_vs_tneg<-
+  HR_data%>%
+  cbind(triple_neg_data)%>%
+  rowwise()%>%
+  summarise(test=list(wilcox.test(c_across(one_of(HR_samples)),
+                                  c_across(one_of(triple_neg_samples)))))%>%
+  mutate(chr = data$Chromosome, start = data$Start, end = data$End)%>%
+  mutate(p.value = map_dbl(test,~.x$p.value))%>%
+  mutate(q.value=p.adjust(p.value,method = 'BH'))
+
+test_results_hr_vs_tneg%>%
+  arrange(chr,start)%>%
+  mutate(no = row_number())%>%
+  ggplot(aes(x=no,y=-log(q.value),fill=as.factor(chr)))+
+  geom_col()+
+  geom_hline(yintercept = -log10(0.05),color='blue',alpha=0.3)+
+  labs(title = 'BH-corrected p-value distribution across whole genome',
+       subtitle = 'HR+ vs Triple negative samples, Mann-Whitney U test',
+       fill = 'Chromosome',
+       x='Chromosome with ordered regions',
+       y=expression(-log[10](q.value)))+
+  coord_cartesian(ylim=c(0,5))+ 
+  scale_x_continuous(breaks=id_to_chr_map$no,labels=id_to_chr_map$Chromosome)
+
+```
+Results per chromosome HER2+ vs HR+ comparison
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+test_results_her2_vs_hr<-
+  HR_data%>%
+  cbind(HER2_data)%>%
+  rowwise()%>%
+  summarise(test=list(wilcox.test(c_across(one_of(HER2_samples)),
+                                  c_across(one_of(HR_samples)))))%>%
+  mutate(chr = data$Chromosome, start = data$Start, end = data$End)%>%
+  mutate(p.value = map_dbl(test,~.x$p.value))%>%
+  mutate(q.value=p.adjust(p.value,method = 'BH'))
+
+test_results_hr_vs_tneg%>%
+  arrange(chr,start)%>%
+  mutate(no = row_number())%>%
+  ggplot(aes(x=no,y=-log(q.value),fill=as.factor(chr)))+
+  geom_col()+
+  geom_hline(yintercept = -log10(0.05),color='blue',alpha=0.3)+
+  labs(title = 'BH-corrected p-value distribution across whole genome',
+       subtitle = 'HER2+ vs HR+ samples, Mann-Whitney U test',
+       fill = 'Chromosome',
+       x='Chromosome with ordered regions',
+       y=expression(-log[10](q.value)))+
+  coord_cartesian(ylim=c(0,5))+ 
+  scale_x_continuous(breaks=id_to_chr_map$no,labels=id_to_chr_map$Chromosome)
+```
+Now we do group comparisons for every group against everything else
+
+HER2+ vs everything else:
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+test_results_her2_vs_else<-
+  data%>%
+  select(-1:-4)%>%
+  rowwise()%>%
+  summarise(test=list(wilcox.test(c_across(one_of(HER2_samples)),
+                                  c_across(one_of(c(HR_samples,triple_neg_samples))))))%>%
+  mutate(chr = data$Chromosome, start = data$Start, end = data$End)%>%
+  mutate(p.value = map_dbl(test,~.x$p.value))%>%
+  mutate(q.value=p.adjust(p.value,method = 'BH'))
+
+test_results_her2_vs_else%>%
+  arrange(chr,start)%>%
+  mutate(no = row_number())%>%
+  ggplot(aes(x=no,y=-log(q.value),fill=as.factor(chr)))+
+  geom_col()+
+  geom_hline(yintercept = -log10(0.05),color='blue',alpha=0.3)+
+  labs(title = 'BH-corrected p-value distribution across whole genome',
+       subtitle = 'HER2+ vs HR+ and Triple negative samples, Mann-Whitney U test',
+       fill = 'Chromosome',
+       x='Chromosome with ordered regions',
+       y=expression(-log[10](q.value)))+
+  coord_cartesian(ylim=c(0,5))+ 
+  scale_x_continuous(breaks=id_to_chr_map$no,labels=id_to_chr_map$Chromosome)
+```
+HR+ vs everything else:
+```{r echo=FALSE, message=TRUE, warning=FALSE}
+test_results_hr_vs_else<-
+  data%>%
+  select(-1:-4)%>%
+  rowwise()%>%
+  summarise(test=list(wilcox.test(c_across(one_of(HR_samples)),
+                                  c_across(one_of(c(HER2_samples,triple_neg_samples))))))%>%
+  mutate(chr = data$Chromosome, start = data$Start, end = data$End)%>%
+  mutate(p.value = map_dbl(test,~.x$p.value))%>%
+  mutate(q.value=p.adjust(p.value,method = 'BH'))
+
+test_results_hr_vs_else%>%
+  arrange(chr,start)%>%
+  mutate(no = row_number())%>%
+  ggplot(aes(x=no,y=-log(q.value),fill=as.factor(chr)))+
+  geom_col()+
+  geom_hline(yintercept = -log10(0.05),color='blue',alpha=0.3)+
+  labs(title = 'BH-corrected p-value distribution across whole genome',
+       subtitle = 'HR+ vs HER2+ and Triple negative samples, Mann-Whitney U test',
+       fill = 'Chromosome',
+       x='Chromosome with ordered regions',
+       y=expression(-log[10](q.value)))+
+  coord_cartesian(ylim=c(0,5))+ 
+  scale_x_continuous(breaks=id_to_chr_map$no,labels=id_to_chr_map$Chromosome)
+```
+Triple negative vs everything else:
+
+```{r echo=FALSE, message=TRUE, warning=FALSE}
+test_results_triple_neg_vs_else<-
+  data%>%
+  select(-1:-4)%>%
+  rowwise()%>%
+  summarise(test=list(wilcox.test(c_across(one_of(triple_neg_samples)),
+                                  c_across(one_of(c(HER2_samples,HR_samples))))))%>%
+  mutate(chr = data$Chromosome, start = data$Start, end = data$End)%>%
+  mutate(p.value = map_dbl(test,~.x$p.value))%>%
+  mutate(q.value=p.adjust(p.value,method = 'BH'))
+
+test_results_triple_neg_vs_else%>%
+  arrange(chr,start)%>%
+  mutate(no = row_number())%>%
+  ggplot(aes(x=no,y=-log(q.value),fill=as.factor(chr)))+
+  geom_col()+
+  geom_hline(yintercept = -log10(0.05),color='blue',alpha=0.3)+
+  labs(title = 'BH-corrected p-value distribution across whole genome',
+       subtitle = 'Triple negative vs HER2+ and HR+ samples, Mann-Whitney U test',
+       fill = 'Chromosome',
+       x='Chromosome with ordered regions',
+       y=expression(-log[10](q.value)))+
+  coord_cartesian(ylim=c(0,5))+ 
+  scale_x_continuous(breaks=id_to_chr_map$no,labels=id_to_chr_map$Chromosome)
+```
+
